@@ -252,7 +252,7 @@ class ModelForm(BaseModel):
 
     model_config = ConfigDict(extra='ignore')
 
-    id: str = Field(pattern=r'^\S+$')
+    id: str
     base_model_id: str | None = None
     name: str
     meta: ModelMeta
