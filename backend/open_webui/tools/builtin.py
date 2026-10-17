@@ -1709,6 +1709,12 @@ async def search_chats(
         log.exception(f'search_chats error: {e}')
         return JSONCodec.dumps({'error': str(e)})
 
+async def get_current_chat_id(self, __chat_id__: str = "unknown") -> dict:
+    """Return the ID of the current chat/session.
+
+    :return: A string of the current chat id
+    """
+    return __chat_id__
 
 async def view_chat(
     chat_id: str,

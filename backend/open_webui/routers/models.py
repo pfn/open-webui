@@ -131,7 +131,7 @@ def _safe_static_redirect_path(url: str) -> str | None:
 
 
 def is_valid_model_id(model_id: str) -> bool:
-    return model_id and len(model_id) <= 256 and not any(char.isspace() for char in model_id)
+    return model_id and len(model_id) <= 256
 
 
 async def _verify_background_image(url: str | None, user, db, previous_url: str | None = None) -> None:
@@ -1192,7 +1192,7 @@ async def update_model_by_id(
 
 
 class ModelAccessGrantsForm(BaseModel):
-    id: str = Field(pattern=r'^\S+$')
+    id: str
     name: str | None = None
     access_grants: list[dict]
 

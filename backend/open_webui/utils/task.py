@@ -168,10 +168,72 @@ def truncate_content(content: str, max_chars: int, mode: str = 'middletruncate')
         return f'{content[:half]}...{content[-(max_chars - half) :]}'
 
 
+def _resolve_content_filter_hook(mode: str, ttl: int = 300):
+    """Resolve a dynamic content-filter mode to (callable, valves) by Function id.
+
+    Contract: the Function's ID equals the mode (e.g. Function id 'emoji_rank'
+    serves filter_str 'emoji_rank:2300'), it is active, and it defines a
+    module-level callable named after the mode (or the generic alias
+    'content_filter') with the interface f(messages, max_chars, valves).
+    Resolved by a side thread (Functions.* are async, this call site is sync);
+    cached for `ttl` seconds, failures cached briefly so they retry.
+    """
+    import logging
+
+    log = logging.getLogger(__name__)
+    cache = getattr(_resolve_content_filter_hook, "cache", None)
+    if cache is None:
+        cache = _resolve_content_filter_hook.cache = {}
+    import time as _time
+    hit = cache.get(mode)
+    #if hit and hit[0] > _time.time():
+    #    return hit[1], hit[2]
+
+    box = []
+    def _runner():
+        import asyncio
+
+        async def _go():
+            from open_webui.models.functions import Functions
+            fn_row = await Functions.get_function_by_id(mode)
+            if not fn_row or not getattr(fn_row, "is_active", False):
+                return
+            try:
+                valves = await Functions.get_function_valves_by_id(mode) or {}
+            except Exception:
+                valves = {}
+            ns = {"__name__": f"cf_{fn_row.id}", "__file__": fn_row.id}
+            exec(fn_row.content, ns)
+            fn = ns.get(mode) or ns.get("content_filter")
+            if callable(fn):
+                box.append((fn, valves))
+
+        asyncio.run(_go())
+
+    try:
+        import threading
+        t = threading.Thread(target=_runner, daemon=True)
+        t.start()
+        t.join(3.0)
+    except Exception:
+        log.exception("content filter hook resolution thread failed for %r", mode)
+    fn, valves = (box[0] if box else (None, None))
+    if fn is None:
+        log.warning("content filter hook %r unresolved (no active Function with that id)", mode)
+        cache[mode] = (_time.time() + 5, fn, valves)
+    else:
+        cache[mode] = (_time.time() + ttl, fn, valves)
+    return fn, valves
+
+
+
 def apply_content_filter(messages: list[dict], filter_str: str) -> list[dict]:
     """Apply a content filter to each message's content.
 
     filter_str is like 'middletruncate:500', 'start:200', or 'end:200'.
+    Unknown modes are resolved dynamically from Filter Functions that declare
+    them via a 'content_filters' valve and expose a module-level function with
+    the mode's name (interface: f(messages, max_chars, valves) -> messages).
     Returns a new list with truncated content (original messages are not mutated).
     """
     parts = filter_str.split(':')
@@ -185,6 +247,16 @@ def apply_content_filter(messages: list[dict], filter_str: str) -> list[dict]:
         return messages
 
     if mode not in ('middletruncate', 'start', 'end'):
+        # Dynamic content-filter hook: unknown modes are resolved from active
+        # Filter Functions. A Function opts in by listing modes in its
+        # 'content_filters' valve (comma-separated) AND defining a module-level
+        # function named after the mode (or 'content_filter'), with the
+        # interface f(messages, max_chars, valves) -> messages. Lookup is
+        # hydrated by a side thread (Functions.* APIs are async, this call
+        # site is sync) and cached; unresolved modes stay a no-op.
+        handler, valves = _resolve_content_filter_hook(mode)
+        if handler:
+            return handler(messages, max_chars, valves)
         return messages
 
     result = []

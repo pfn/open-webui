@@ -1898,7 +1898,7 @@ def get_reasoning_format(model: dict) -> str | None:
         return 'thinking'
     if provider == 'llama.cpp':
         return 'reasoning_content'
-    return None
+    return "reasoning"
 
 
 def strip_reasoning_details(output: list) -> list:
